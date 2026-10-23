@@ -91,6 +91,18 @@
   .stat span{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
   .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:999px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
   .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  /* ---- notes -> flashcards generator ---- */
+  .gen-title{font-family:var(--serif);font-size:26px;margin:0 0 6px}
+  .drop{border:1.5px dashed var(--line);border-radius:14px;background:#fff;padding:14px;display:flex;gap:12px;align-items:center;flex-wrap:wrap;margin-top:12px}
+  .method{font-size:12px;background:#eaf1ec;color:var(--accent2);border-radius:999px;padding:4px 11px}
+  .gen-opt{display:flex;gap:18px;flex-wrap:wrap;align-items:center}
+  .gen-opt label{display:flex;gap:7px;align-items:center;font-size:14px}
+  .chk{width:18px;height:18px;accent-color:var(--accent);cursor:pointer}
+  .cand{background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px;display:grid;grid-template-columns:auto 1fr;gap:12px;align-items:start}
+  .cand .tagchip{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);margin-bottom:6px}
+  .cand input.field{padding:9px 11px;font-size:14px;margin-bottom:8px}
+  .cand input.field:last-child{margin-bottom:0}
+  .badge-new{font-size:13px;color:var(--muted)}
   .hidden{display:none!important}
   .hint-text{color:var(--muted);font-size:13.5px;line-height:1.6}
   .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 6px;font-size:12px;background:#fff}
@@ -183,20 +195,24 @@
     if(route.view==="list") renderList();
     else if(route.view==="deck") renderDeck(route.params.id);
     else if(route.view==="study") renderStudy(route.params.id);
+    else if(route.view==="generate") renderGenerate();
   }
 
   /* ---------------- Deck list ---------------- */
   function renderList(){
     location.hash="";
-    var addBtn = el("button","btn accent","+ New deck");
+    var genBtn = el("button","btn accent","Generate from notes");
+    genBtn.onclick = function(){ gen.candidates=[]; go("generate"); };
+    var addBtn = el("button","btn ghost","+ New deck");
     addBtn.onclick = newDeck;
     var io = el("button","btn ghost","Import");
     io.onclick = importDeck;
+    headerActions.appendChild(genBtn);
     headerActions.appendChild(addBtn);
     headerActions.appendChild(io);
 
     if(!state.decks.length){
-      app.innerHTML = '<div class="empty">No decks yet. Create your first one and start remembering.</div>';
+      app.innerHTML = '<div class="empty">No decks yet. Create one, or use <b>Generate from notes</b> to draft cards from a PDF, an image or pasted text.</div>';
       return;
     }
     var grid = el("div","deck-grid");
@@ -406,6 +422,358 @@
       if(e.key==="1") grade(0); else if(e.key==="2") grade(1); else if(e.key==="3") grade(2);
     }
   });
+
+  /* ================= Generate flashcards from your notes ================= */
+  var CDN_PDFJS = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js";
+  var CDN_PDFWORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
+  var CDN_TESS = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
+  var STOP = new Set(("the a an and or but of to in on at for with as is are was were be been being this that these those it its from by into over under about which who whom whose what when where why how not no than then there their they them he she his her you your we our i me my so such can could may might will would shall should do does did have has had also between within during while each other more most some any all both few many much own same very just only too once here").split(" "));
+  var gen = { sourceText:"", sourceLabel:"", method:"", candidates:[], deck:"__new__", newName:"", count:15, defs:true, cloze:true, qa:true };
+  var SAMPLE = "The water cycle\nEvaporation: the process by which liquid water turns into vapour.\nCondensation is the process where vapour cools and becomes liquid droplets.\nPrecipitation refers to water falling from clouds as rain, snow or hail.\nCollection is when water gathers in rivers, lakes and oceans.\n\nQ: What drives the water cycle?\nA: Energy from the sun.\n\nPhotosynthesis is the process plants use to make glucose from sunlight.\nChlorophyll is the green pigment that captures light energy.\nThe water cycle repeats endlessly and distributes fresh water across the planet.";
+
+  function loadScript(src){
+    return new Promise(function(res,rej){
+      var s=document.createElement("script");
+      s.src=src; s.async=true;
+      s.onload=function(){ res(); };
+      s.onerror=function(){ rej(new Error("Could not load the reading engine — check your connection")); };
+      document.head.appendChild(s);
+    });
+  }
+  function latin1(u8){ var s="", ch=0x8000; for(var i=0;i<u8.length;i+=ch){ s+=String.fromCharCode.apply(null, u8.subarray(i,i+ch)); } return s; }
+  async function inflate(bytes){
+    var ds=new DecompressionStream("deflate");
+    var stream=new Blob([bytes]).stream().pipeThrough(ds);
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+  function pdfUnescape(s){
+    return s.replace(/\\([nrtbf()\\]|[0-7]{1,3})/g, function(_,g){
+      switch(g){ case "n":return "\n"; case "r":return "\r"; case "t":return "\t"; case "b":return "\b"; case "f":return "\f"; case "(":return "("; case ")":return ")"; case "\\":return "\\"; }
+      return String.fromCharCode(parseInt(g,8));
+    });
+  }
+  function pdfContentToText(s){
+    var out="", i=0, n=s.length;
+    while(i<n){
+      var ch=s[i];
+      if(ch==="("){
+        var depth=1, j=i+1, str="";
+        while(j<n && depth>0){
+          if(s[j]==="\\"){ str+=s[j]+(s[j+1]||""); j+=2; continue; }
+          if(s[j]==="("){ depth++; } else if(s[j]===")"){ depth--; if(depth===0) break; }
+          str+=s[j]; j++;
+        }
+        out+=pdfUnescape(str); i=j+1;
+      } else if(ch==="<" && s[i+1]!=="<"){
+        var k=s.indexOf(">",i); if(k<0) break;
+        var hex=s.slice(i+1,k).replace(/\s/g,"");
+        if(hex.length%2===0 && /^[0-9A-Fa-f]*$/.test(hex)){
+          var bs=""; for(var h=0;h<hex.length;h+=2){ bs+=String.fromCharCode(parseInt(hex.substr(h,2),16)); }
+          out+=bs;
+        }
+        i=k+1;
+      } else if(ch==="["||ch==="]"){
+        i++;
+      } else {
+        var mm=/^(T\*|TD|Td|'|")/.exec(s.slice(i));
+        if(mm){ out+="\n"; i+=mm[0].length; } else i++;
+      }
+    }
+    return out.replace(/[ \t]+/g," ").replace(/\n{2,}/g,"\n").trim();
+  }
+  async function naivePdfText(buf){
+    var bytes=new Uint8Array(buf), raw=latin1(bytes), out=[], m;
+    var re=/stream\r?\n([\s\S]*?)endstream/g;
+    while((m=re.exec(raw))){
+      var chunk=m[1], cb=new Uint8Array(chunk.length);
+      for(var i=0;i<chunk.length;i++) cb[i]=chunk.charCodeAt(i)&0xff;
+      var content;
+      try{ content=latin1(await inflate(cb)); }catch(e){ content=chunk; }
+      var t=pdfContentToText(content);
+      if(t) out.push(t);
+    }
+    if(!out.length) out.push(pdfContentToText(raw));
+    return out.join("\n");
+  }
+  async function extractPdf(file){
+    try{
+      if(!window.pdfjsLib) await loadScript(CDN_PDFJS);
+      if(window.pdfjsLib){
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc=CDN_PDFWORKER;
+        var buf=await file.arrayBuffer();
+        var doc=await window.pdfjsLib.getDocument({data:buf}).promise;
+        var parts=[];
+        for(var p=1;p<=doc.numPages;p++){
+          var page=await doc.getPage(p);
+          var tc=await page.getTextContent();
+          var line="", lines=[];
+          tc.items.forEach(function(it){ line+=it.str; if(it.hasEOL){ lines.push(line); line=""; } });
+          if(line) lines.push(line);
+          parts.push(lines.join("\n"));
+        }
+        var text=parts.join("\n\n");
+        if(text.replace(/\s/g,"").length>20) return { text:text, method:"PDF via pdf.js" };
+      }
+    }catch(e){ /* fall through to the offline reader */ }
+    try{
+      var t2=await naivePdfText(await file.arrayBuffer());
+      if(t2 && t2.replace(/\s/g,"").length>20) return { text:t2, method:"PDF via built-in reader (offline)" };
+    }catch(e){}
+    throw new Error("Couldn't read that PDF. Paste the text instead, or go online once so the PDF engine can load.");
+  }
+  async function ocrImage(file){
+    try{
+      if(!window.Tesseract) await loadScript(CDN_TESS);
+      if(!window.Tesseract) throw new Error("no engine");
+      var res=await window.Tesseract.recognize(file, "eng");
+      return { text: res.data.text, method:"Image via OCR" };
+    }catch(e){
+      throw new Error("Reading images needs a connection the first time. Paste the text instead.");
+    }
+  }
+
+  /* ---- on-device card engine ---- */
+  function normalizeText(t){
+    return String(t).replace(/\r\n?/g,"\n").replace(/\u00ad/g,"").replace(/-\n/g,"").replace(/[ \t]+/g," ").replace(/ ?\n ?/g,"\n").replace(/\n{3,}/g,"\n\n").trim();
+  }
+  function splitSentences(t){ return t.replace(/([.!?])\s+/g,"$1\u0001").split("\u0001").map(function(s){return s.trim();}).filter(function(s){return s.length>0;}); }
+  function termFreq(text){
+    var tf={}, words=text.toLowerCase().match(/[a-z][a-z\-']{2,}/g)||[];
+    words.forEach(function(w){ if(!STOP.has(w) && w.length>=4) tf[w]=(tf[w]||0)+1; });
+    var caps=text.match(/\b[A-Z][a-z]{3,}\b/g)||[];
+    caps.forEach(function(w){ var k=w.toLowerCase(); if(!STOP.has(k)) tf[k]=(tf[k]||0)+1.5; });
+    return tf;
+  }
+  function scoreTerm(term, tf){ var ws=(term.toLowerCase().match(/[a-z][a-z\-']{2,}/g)||[]), s=0; ws.forEach(function(w){ s+=(tf[w]||0); }); return Math.min(6,s); }
+  function defScore(s){ var n=s.split(/\s+/).length; return (n>=6&&n<=30)?2:(n<6?0.5:1); }
+  function cleanTerm(t){ return t.replace(/^[\s\-\u2022*\u2013\u2014]+/,"").replace(/^(the|a|an)\s+/i,"").replace(/[.,;:]+$/,"").trim(); }
+  function isGeneric(t){ var w=t.toLowerCase(); return STOP.has(w)||w.length<3; }
+  function cap(s){ s=String(s).trim(); return s.charAt(0).toUpperCase()+s.slice(1); }
+  function escapeReg(s){ return s.replace(/[.*+?^${}()|[\]\\]/g,"\\$&"); }
+  function salientTerm(s, tf){
+    var ws=s.match(/\b[A-Za-z][A-Za-z\-']{3,}\b/g)||[], best=null, bs=-1;
+    ws.forEach(function(w){ var k=w.toLowerCase(); if(STOP.has(k)) return;
+      var sc=(tf[k]||0)+(w[0]===w[0].toUpperCase()?0.8:0)+(w.length>=6?0.3:0);
+      if(sc>bs){ bs=sc; best=w; } });
+    return bs<1.2?null:best;
+  }
+  function addCand(list,obj){
+    var key=obj.front.toLowerCase().replace(/[^a-z0-9]/g,"");
+    for(var i=0;i<list.length;i++){ if(list[i]._key===key) return; }
+    obj._key=key; list.push(obj);
+  }
+  function makeCandidates(raw){
+    var text=normalizeText(raw), cands=[], tf=termFreq(text);
+    var lines=text.split("\n").map(function(l){return l.trim();});
+
+    // 1. "Term: definition" and "Term — definition" lines
+    lines.forEach(function(line){
+      var m=/^(?:[-\u2022*\u2013]\s*)?([A-Z][^:\u2013\u2014]{1,60}?)\s*[:\u2013\u2014]\s*(.{15,})$/.exec(line);
+      if(m){
+        var term=cleanTerm(m[1]), def=m[2].trim();
+        if(term && def && term.split(/\s+/).length<=8 && !/^(q|a|question|answer)$/i.test(term)){
+          addCand(cands,{front:"What is "+term+"?", back:cap(def), tag:"definition", score:scoreTerm(term,tf)+3+defScore(def)});
+        }
+      }
+    });
+
+    // 2. explicit Q: / A: pairs
+    for(var i=0;i<lines.length;i++){
+      var qm=/^(?:Q|Question)\s*[:\-]\s*(.+)$/i.exec(lines[i]);
+      if(qm){
+        for(var j=i+1;j<Math.min(i+3,lines.length);j++){
+          var am=/^(?:A|Answer)\s*[:\-]\s*(.+)$/i.exec(lines[j]);
+          if(am){ addCand(cands,{front:cap(qm[1]), back:cap(am[1]), tag:"qa", score:8}); break; }
+        }
+      }
+    }
+
+    // 3. "X is / are / refers to / means ..."
+    // split sentences within each line so separate lines never merge into one sentence
+    var sentences=[];
+    lines.forEach(function(l){ splitSentences(l).forEach(function(s){ if(s) sentences.push(s); }); });
+    sentences.forEach(function(s){
+      var d=/\b(is|are|was|were|refers to|means|consists of|describes|defined as|is called|is known as)\b/i.exec(s);
+      if(!d) return;
+      var subject=s.slice(0,d.index).trim(), pred=s.slice(d.index).trim();
+      if(!subject || subject.split(/\s+/).length>6 || subject.length>60 || pred.length<10) return;
+      var term=cleanTerm(subject);
+      if(!term || isGeneric(term)) return;
+      addCand(cands,{front:"What is "+term+"?", back:cap(s), tag:"definition", score:scoreTerm(term,tf)+2+defScore(s)});
+    });
+
+    // 4. heading followed by a sentence
+    for(var k=0;k<lines.length-1;k++){
+      var ln=lines[k];
+      if(ln.length>=3 && ln.length<=60 && !/[.!?:]$/.test(ln) && /^[A-Z0-9]/.test(ln) && ln.split(/\s+/).length<=7){
+        var nxt=lines[k+1];
+        if(nxt && nxt.length>25 && /[.!?]$/.test(nxt)){
+          var head=ln.charAt(0).toLowerCase()+ln.slice(1);
+          addCand(cands,{front:"What is "+head+"?", back:cap(nxt), tag:"concept", score:scoreTerm(ln,tf)+1+defScore(nxt)});
+        }
+      }
+    }
+
+    // 5. fill-in-the-blank from important sentences (one card per answer, skip Q/A lines)
+    var clozeUsed={};
+    sentences.forEach(function(s){
+      if(s.length<30||s.length>220) return;
+      if(/^(q|a|question|answer)\s*[:\-]/i.test(s)) return;
+      var term=salientTerm(s,tf);
+      if(!term) return;
+      var tk=term.toLowerCase();
+      if(clozeUsed[tk]) return;
+      var blanked=s.replace(new RegExp("\\b"+escapeReg(term)+"\\b"),"______");
+      if(blanked===s) return;
+      clozeUsed[tk]=1;
+      addCand(cands,{front:blanked, back:cap(term), tag:"cloze", score:scoreTerm(term,tf)+1.5});
+    });
+    return cands;
+  }
+  function generateCards(){
+    var text=gen.sourceText;
+    if(!text || text.replace(/\s/g,"").length<30){ toast("Add a bit more text first"); return; }
+    var cands=makeCandidates(text).filter(function(x){
+      if(x.tag==="cloze") return gen.cloze;
+      if(x.tag==="qa") return gen.qa;
+      return gen.defs;
+    });
+    cands.sort(function(a,b){ return b.score-a.score; });
+    var seen={}, out=[];
+    cands.forEach(function(x){ if(!seen[x._key]){ seen[x._key]=1; out.push(x); } });
+    gen.candidates = out.slice(0, gen.count).map(function(x){ return { front:x.front, back:x.back, tag:x.tag, include:true }; });
+    if(!gen.candidates.length){ toast("Couldn't find much to turn into cards — try more text"); }
+    render();
+  }
+  function addGenerated(){
+    var chosen=gen.candidates.filter(function(x){ return x.include && (x.front.trim()||x.back.trim()); });
+    if(!chosen.length){ toast("Nothing selected"); return; }
+    var deck;
+    if(gen.deck==="__new__" || !deckById(gen.deck)){
+      deck={ id:uid(), name:(gen.newName.trim()||"Generated deck"), cards:[] };
+      state.decks.unshift(deck);
+    } else { deck=deckById(gen.deck); }
+    chosen.forEach(function(x){ deck.cards.unshift(c(x.front.trim(), x.back.trim())); });
+    save();
+    var n=chosen.length, name=deck.name;
+    gen.candidates=[]; gen.sourceText=""; gen.sourceLabel=""; gen.method=""; gen.newName=""; gen.deck="__new__";
+    toast("Added "+n+" cards to \u201C"+name+"\u201D");
+    go("deck",{id:deck.id}); location.hash="deck/"+deck.id;
+  }
+
+  function renderGenerate(){
+    headerActions.innerHTML="";
+    var back=el("button","btn ghost","\u2190 Decks"); back.onclick=function(){ gen.candidates=[]; go("list"); };
+    headerActions.appendChild(back);
+
+    var wrap=el("div");
+    wrap.appendChild(el("h2","gen-title","Build flashcards from your notes"));
+    wrap.appendChild(el("p","hint-text","Add a PDF, an image of your notes, a text file \u2014 or paste text. Recall reads it on your device and drafts the cards. Nothing is uploaded."));
+
+    var panel=el("div","panel");
+    panel.appendChild(el("div","lbl","Your notes"));
+    var ta=el("textarea","field"); ta.placeholder="Paste your notes here\u2026";
+    ta.value=gen.sourceText; ta.style.minHeight="150px";
+    ta.oninput=function(){ gen.sourceText=ta.value; };
+    panel.appendChild(ta);
+
+    var fileInput=document.createElement("input");
+    fileInput.type="file"; fileInput.accept=".pdf,.txt,.md,.markdown,image/*"; fileInput.style.display="none";
+    fileInput.onchange=async function(){
+      var f=fileInput.files && fileInput.files[0]; if(!f) return;
+      toast("Reading "+f.name+" \u2026");
+      try{
+        var res;
+        if(/\.pdf$/i.test(f.name) || f.type==="application/pdf") res=await extractPdf(f);
+        else if(/^image\//.test(f.type)) res=await ocrImage(f);
+        else res={ text: await f.text(), method:"Text file" };
+        if(!res.text || res.text.replace(/\s/g,"").length<20) throw new Error("No readable text found in that file.");
+        gen.sourceText=res.text; gen.method=res.method; gen.sourceLabel=f.name;
+        toast("Loaded "+f.name); render();
+      }catch(err){ toast(err.message||"Couldn't read that file"); }
+    };
+    panel.appendChild(fileInput);
+
+    var row=el("div","drop");
+    var up=el("button","btn ghost","Upload PDF / image / .txt"); up.onclick=function(){ fileInput.click(); };
+    var sample=el("button","btn ghost","Try sample notes"); sample.onclick=function(){ gen.sourceText=SAMPLE; gen.method="Sample"; gen.sourceLabel=""; gen.candidates=[]; render(); };
+    row.appendChild(up); row.appendChild(sample);
+    if(gen.method) row.appendChild(el("span","method", esc(gen.sourceLabel? gen.sourceLabel+" \u00B7 "+gen.method : gen.method)));
+    panel.appendChild(row);
+    wrap.appendChild(panel);
+
+    var opt=el("div","panel");
+    opt.appendChild(el("div","lbl","Options"));
+    var orow=el("div","gen-opt");
+    var countWrap=el("label"); countWrap.appendChild(document.createTextNode("How many cards "));
+    var sel=el("select","field"); sel.style.width="auto";
+    [10,15,25,40,60].forEach(function(n){ var o=document.createElement("option"); o.value=n; o.textContent=n; if(n===gen.count) o.selected=true; sel.appendChild(o); });
+    sel.onchange=function(){ gen.count=parseInt(sel.value,10); };
+    countWrap.appendChild(sel); orow.appendChild(countWrap);
+    function chk(label,key){
+      var l=el("label"); var i=document.createElement("input"); i.type="checkbox"; i.className="chk"; i.checked=gen[key];
+      i.onchange=function(){ gen[key]=i.checked; };
+      l.appendChild(i); l.appendChild(document.createTextNode(label)); return l;
+    }
+    orow.appendChild(chk("Definitions","defs"));
+    orow.appendChild(chk("Fill-in-the-blank","cloze"));
+    orow.appendChild(chk("Q & A pairs","qa"));
+    opt.appendChild(orow);
+    var genBtn=el("button","btn accent","Generate flashcards"); genBtn.style.marginTop="16px";
+    genBtn.onclick=function(){ gen.sourceText=ta.value; generateCards(); };
+    opt.appendChild(genBtn);
+    wrap.appendChild(opt);
+
+    if(gen.candidates.length){
+      var rev=el("div","panel");
+      var head=el("div","row"); head.style.justifyContent="space-between"; head.style.alignItems="center";
+      head.appendChild(el("div","lbl","Review "+gen.candidates.length+" cards \u2014 edit anything, untick what you don't want"));
+      var selall=el("button","btn ghost tiny","Toggle all");
+      selall.onclick=function(){ var any=gen.candidates.some(function(x){return !x.include;}); gen.candidates.forEach(function(x){x.include=any;}); render(); };
+      head.appendChild(selall); rev.appendChild(head);
+
+      function updateAddLabel(){
+        var n=gen.candidates.filter(function(x){return x.include && x.front.trim();}).length;
+        var l=document.getElementById("addGenLabel"); if(l) l.textContent=n+" selected";
+      }
+      gen.candidates.forEach(function(cd){
+        var rowEl=el("div","cand");
+        var left=el("div");
+        var cb=document.createElement("input"); cb.type="checkbox"; cb.className="chk"; cb.checked=cd.include;
+        cb.onchange=function(){ cd.include=cb.checked; updateAddLabel(); };
+        left.appendChild(cb); rowEl.appendChild(left);
+        var right=el("div");
+        right.appendChild(el("div","tagchip", cd.tag));
+        var fin=el("input","field"); fin.value=cd.front; fin.oninput=function(){ cd.front=fin.value; };
+        var bin=el("input","field"); bin.value=cd.back; bin.oninput=function(){ cd.back=bin.value; };
+        right.appendChild(fin); right.appendChild(bin);
+        rowEl.appendChild(right); rev.appendChild(rowEl);
+      });
+
+      var drow=el("div","row"); drow.style.marginTop="14px"; drow.style.alignItems="center";
+      drow.appendChild(el("span","lbl","Add to "));
+      var dsel=el("select","field"); dsel.style.width="auto";
+      var optNew=document.createElement("option"); optNew.value="__new__"; optNew.textContent="\uFF0B New deck"; dsel.appendChild(optNew);
+      state.decks.forEach(function(d){ var o=document.createElement("option"); o.value=d.id; o.textContent=d.name; dsel.appendChild(o); });
+      dsel.value=gen.deck||"__new__";
+      var newNameWrap=el("div"); newNameWrap.style.marginTop="10px";
+      var nn=el("input","field"); nn.placeholder="New deck name (e.g. Biology \u2014 Cell structure)"; nn.value=gen.newName;
+      nn.oninput=function(){ gen.newName=nn.value; };
+      newNameWrap.appendChild(nn);
+      newNameWrap.style.display=(gen.deck==="__new__")?"block":"none";
+      dsel.onchange=function(){ gen.deck=dsel.value; newNameWrap.style.display=(dsel.value==="__new__")?"block":"none"; };
+      drow.appendChild(dsel); rev.appendChild(drow); rev.appendChild(newNameWrap);
+
+      var addRow=el("div","row"); addRow.style.marginTop="16px"; addRow.style.alignItems="center";
+      var addBtn2=el("button","btn green","Add cards"); addBtn2.onclick=addGenerated;
+      var label=el("span","badge-new",""); label.id="addGenLabel";
+      addRow.appendChild(addBtn2); addRow.appendChild(label); rev.appendChild(addRow);
+      wrap.appendChild(rev);
+      updateAddLabel();
+    }
+
+    app.innerHTML=""; app.appendChild(wrap);
+  }
 
   /* boot */
   fromHash();
