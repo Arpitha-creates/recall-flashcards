@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Recall — spaced-repetition flashcards</title>
+<style>
+  :root{
+    --paper:#fbf7ef; --paper2:#f3ece0; --ink:#221f1a; --muted:#7c7468;
+    --line:#e3d9c8; --accent:#b4552f; --accent2:#2f6b57; --gold:#c9962f;
+    --shadow:0 10px 30px rgba(60,45,25,.10);
+    --serif:"Iowan Old Style","Palatino Linotype",Palatino,Georgia,"Times New Roman",serif;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;padding:0}
+  body{
+    background:
+      radial-gradient(circle at 12% 8%, #fff8ec 0, transparent 45%),
+      radial-gradient(circle at 88% 92%, #f2e9d8 0, transparent 40%),
+      var(--paper);
+    color:var(--ink); font-family:var(--sans); min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:920px;margin:0 auto;padding:26px 20px 80px}
+  header.top{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:26px}
+  .brand{display:flex;align-items:baseline;gap:12px}
+  .brand h1{font-family:var(--serif);font-size:38px;margin:0;letter-spacing:-.5px}
+  .brand .dot{width:10px;height:10px;border-radius:50%;background:var(--accent);display:inline-block;transform:translateY(-4px)}
+  .brand small{color:var(--muted);font-size:13px;letter-spacing:.14em;text-transform:uppercase}
+  .rule{height:1px;background:var(--line);margin:0 0 26px}
+  .btn{
+    font-family:var(--sans);font-size:14px;font-weight:600;border:1px solid var(--ink);
+    background:var(--ink);color:var(--paper);padding:10px 16px;border-radius:999px;cursor:pointer;
+    transition:transform .12s ease, box-shadow .12s ease, background .12s;
+  }
+  .btn:hover{transform:translateY(-1px);box-shadow:var(--shadow)}
+  .btn.ghost{background:transparent;color:var(--ink);border-color:var(--line)}
+  .btn.ghost:hover{border-color:var(--ink)}
+  .btn.accent{background:var(--accent);border-color:var(--accent)}
+  .btn.green{background:var(--accent2);border-color:var(--accent2)}
+  .btn.tiny{padding:6px 12px;font-size:12.5px}
+  .btn:disabled{opacity:.4;cursor:not-allowed;transform:none;box-shadow:none}
+  .deck-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:16px}
+  .deck{
+    background:var(--paper2);border:1px solid var(--line);border-radius:16px;padding:18px 18px 16px;
+    cursor:pointer;position:relative;overflow:hidden;transition:transform .14s ease, box-shadow .14s ease;
+  }
+  .deck:hover{transform:translateY(-3px);box-shadow:var(--shadow)}
+  .deck::after{content:"";position:absolute;inset:0 auto 0 0;width:5px;background:var(--accent)}
+  .deck h3{font-family:var(--serif);font-size:21px;margin:0 0 6px}
+  .deck .meta{color:var(--muted);font-size:13px;display:flex;gap:14px;flex-wrap:wrap}
+  .deck .pill{background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 10px;font-size:12px}
+  .deck .pill.due{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .empty{text-align:center;color:var(--muted);padding:60px 20px;font-family:var(--serif);font-size:19px}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .field{font-family:var(--sans);font-size:15px;padding:11px 13px;border:1px solid var(--line);border-radius:11px;background:#fff;color:var(--ink);width:100%}
+  .field:focus{outline:2px solid var(--accent);outline-offset:1px}
+  textarea.field{resize:vertical;min-height:70px;font-family:var(--serif);font-size:16px}
+  .cardrow{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:start;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:10px}
+  .cardrow .side{font-size:15px}
+  .cardrow .lbl{font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted);margin-bottom:4px}
+  .iconbtn{border:1px solid var(--line);background:#fff;border-radius:9px;width:34px;height:34px;cursor:pointer;color:var(--muted);font-size:16px;line-height:1}
+  .iconbtn:hover{color:var(--accent);border-color:var(--accent)}
+  .panel{background:var(--paper2);border:1px solid var(--line);border-radius:16px;padding:18px;margin-bottom:22px}
+  /* Study */
+  .study-stage{perspective:1400px;margin:20px 0 22px}
+  .flashcard{
+    position:relative;width:100%;min-height:320px;transform-style:preserve-3d;transition:transform .55s cubic-bezier(.2,.8,.2,1);cursor:pointer;
+  }
+  .flashcard.flipped{transform:rotateY(180deg)}
+  .face{
+    position:absolute;inset:0;backface-visibility:hidden;border-radius:20px;border:1px solid var(--line);
+    background:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;
+    padding:34px 30px;text-align:center;box-shadow:var(--shadow);
+  }
+  .face .tag{position:absolute;top:16px;left:18px;font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  .face .big{font-family:var(--serif);font-size:30px;line-height:1.3}
+  .face.back{transform:rotateY(180deg);background:linear-gradient(160deg,#fff,#f7f0e2)}
+  .face .hint{position:absolute;bottom:16px;font-size:12px;color:var(--muted)}
+  .progressbar{height:6px;background:var(--line);border-radius:99px;overflow:hidden;margin:6px 0 4px}
+  .progressbar i{display:block;height:100%;background:var(--accent2);width:0;transition:width .3s}
+  .counter{font-size:13px;color:var(--muted);text-align:center}
+  .study-actions{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:16px}
+  .study-actions .btn{padding:14px}
+  .done-hero{text-align:center;padding:50px 20px}
+  .done-hero h2{font-family:var(--serif);font-size:34px;margin:0 0 8px}
+  .stat-row{display:flex;gap:22px;justify-content:center;margin-top:18px;flex-wrap:wrap}
+  .stat{text-align:center}
+  .stat b{display:block;font-family:var(--serif);font-size:30px}
+  .stat span{font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--ink);color:var(--paper);padding:11px 18px;border-radius:999px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:50}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  .hidden{display:none!important}
+  .hint-text{color:var(--muted);font-size:13.5px;line-height:1.6}
+  .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 6px;font-size:12px;background:#fff}
+  @media(max-width:640px){
+    .brand h1{font-size:30px}
+    .cardrow{grid-template-columns:1fr;gap:6px}
+    .face .big{font-size:24px}
+    .study-actions{grid-template-columns:1fr 1fr 1fr}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <div class="brand">
+      <span class="dot"></span>
+      <h1>Recall</h1>
+      <small>flashcards · spaced repetition</small>
+    </div>
+    <div class="row" id="headerActions"></div>
+  </header>
+  <div class="rule"></div>
+  <main id="app"></main>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+/* ---------------- Recall: a spaced-repetition flashcard trainer ---------------- */
+(function(){
+  "use strict";
+  var KEY = "recall.v1";
+  var INTERVALS = [0, 1, 3, 7, 16, 35]; // days per box
+  var app = document.getElementById("app");
+  var headerActions = document.getElementById("headerActions");
+  var toastEl = document.getElementById("toast");
+
+  /* ---- state ---- */
+  function uid(){ return Math.random().toString(36).slice(2,9); }
+  function now(){ return Date.now(); }
+  var DAY = 86400000;
+
+  var state = load();
+  function load(){
+    try{
+      var raw = localStorage.getItem(KEY);
+      if(raw){ var s = JSON.parse(raw); if(s && s.decks) return s; }
+    }catch(e){}
+    return seed();
+  }
+  function save(){ try{ localStorage.setItem(KEY, JSON.stringify(state)); }catch(e){} }
+
+  function seed(){
+    var d = {
+      id: uid(),
+      name: "Sample · World Capitals",
+      cards: [
+        c("Capital of Japan","Tokyo"),
+        c("Capital of Australia","Canberra"),
+        c("Capital of Canada","Ottawa"),
+        c("Capital of Brazil","Brasília"),
+        c("Capital of Switzerland","Bern"),
+        c("Capital of Türkiye","Ankara")
+      ]
+    };
+    return { decks: [d] };
+  }
+  function c(front, back){ return { id:uid(), front:front, back:back, box:0, due:0, seen:0, right:0 }; }
+
+  function dueCount(deck){ var t=now(); return deck.cards.filter(function(k){ return k.due<=t; }).length; }
+  function deckById(id){ return state.decks.filter(function(d){ return d.id===id; })[0]; }
+
+  /* ---- helpers ---- */
+  function el(tag, cls, html){ var e=document.createElement(tag); if(cls) e.className=cls; if(html!=null) e.innerHTML=html; return e; }
+  function esc(s){ return String(s).replace(/[&<>"]/g,function(m){return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[m];}); }
+  function toast(msg){ toastEl.textContent=msg; toastEl.classList.add("show"); setTimeout(function(){ toastEl.classList.remove("show"); },1600); }
+  function dueLabel(d){ var t=now(); if(d<=t) return "due now"; var days=Math.ceil((d-t)/DAY); return days===1?"due tomorrow":"in "+days+" days"; }
+
+  /* ---- routing ---- */
+  var route = { view:"list" };
+  function go(view, params){ route.view=view; route.params=params||{}; render(); window.scrollTo(0,0); }
+  window.addEventListener("hashchange", fromHash);
+  function fromHash(){
+    var h = location.hash.replace(/^#/,"");
+    if(h.indexOf("deck/")===0){ var id=h.slice(5); if(deckById(id)){ route={view:"deck",params:{id:id}}; render(); return; } }
+    route={view:"list"}; render();
+  }
+
+  function render(){
+    headerActions.innerHTML="";
+    if(route.view==="list") renderList();
+    else if(route.view==="deck") renderDeck(route.params.id);
+    else if(route.view==="study") renderStudy(route.params.id);
+  }
+
+  /* ---------------- Deck list ---------------- */
+  function renderList(){
+    location.hash="";
+    var addBtn = el("button","btn accent","+ New deck");
+    addBtn.onclick = newDeck;
+    var io = el("button","btn ghost","Import");
+    io.onclick = importDeck;
+    headerActions.appendChild(addBtn);
+    headerActions.appendChild(io);
+
+    if(!state.decks.length){
+      app.innerHTML = '<div class="empty">No decks yet. Create your first one and start remembering.</div>';
+      return;
+    }
+    var grid = el("div","deck-grid");
+    state.decks.forEach(function(d){
+      var dc = dueCount(d);
+      var totalSeen = d.cards.reduce(function(a,k){return a+k.seen;},0);
+      var totalRight = d.cards.reduce(function(a,k){return a+k.right;},0);
+      var acc = totalSeen? Math.round(totalRight/totalSeen*100):0;
+      var card = el("div","deck",
+        '<h3>'+esc(d.name)+'</h3>'+
+        '<div class="meta">'+
+          '<span class="pill'+(dc?" due":"")+'">'+dc+' due</span>'+
+          '<span class="pill">'+d.cards.length+' cards</span>'+
+          (totalSeen?'<span class="pill">'+acc+'% recall</span>':'')+
+        '</div>');
+      card.onclick = function(){ go("deck",{id:d.id}); location.hash="deck/"+d.id; };
+      grid.appendChild(card);
+    });
+    app.innerHTML=""; app.appendChild(grid);
+  }
+
+  function newDeck(){
+    var name = prompt("Name your deck:", "New deck");
+    if(name===null) return;
+    name = name.trim() || "Untitled deck";
+    var d = { id:uid(), name:name, cards:[] };
+    state.decks.unshift(d); save(); go("deck",{id:d.id}); location.hash="deck/"+d.id;
+  }
+
+  function importDeck(){
+    var input = document.createElement("input");
+    input.type="file"; input.accept=".json,application/json";
+    input.onchange=function(){
+      var f=input.files[0]; if(!f) return;
+      var r=new FileReader();
+      r.onload=function(){
+        try{
+          var obj=JSON.parse(r.result);
+          if(obj && obj.name && Array.isArray(obj.cards)){
+            var d={ id:uid(), name:obj.name, cards:obj.cards.map(function(k){ return c(k.front||"",k.back||""); }) };
+            state.decks.unshift(d); save(); render(); toast("Imported “"+d.name+"”");
+          } else if(Array.isArray(obj)){
+            var d2={ id:uid(), name:"Imported deck", cards:obj.map(function(k){ return c(k.front||k.q||"",k.back||k.a||""); }) };
+            state.decks.unshift(d2); save(); render(); toast("Imported "+d2.cards.length+" cards");
+          } else { toast("Unrecognised file"); }
+        }catch(e){ toast("Could not read that file"); }
+      };
+      r.readAsText(f);
+    };
+    input.click();
+  }
+
+  /* ---------------- Deck detail ---------------- */
+  function renderDeck(id){
+    var d = deckById(id); if(!d){ go("list"); return; }
+    location.hash="deck/"+id;
+    var back = el("button","btn ghost","← Decks"); back.onclick=function(){ go("list"); };
+    var study = el("button","btn accent", "Study "+(dueCount(d)?("("+dueCount(d)+")"):""));
+    study.onclick=function(){ startStudy(d); };
+    var del = el("button","btn ghost","Delete"); del.onclick=function(){ if(confirm('Delete "'+d.name+'"?')){ state.decks=state.decks.filter(function(x){return x.id!==id;}); save(); go("list"); } };
+    headerActions.appendChild(back); headerActions.appendChild(study); headerActions.appendChild(del);
+
+    var h = el("div","panel");
+    var nameIn = el("input","field"); nameIn.value=d.name;
+    nameIn.oninput=function(){ d.name=nameIn.value; save(); };
+    h.appendChild(el("div","lbl","Deck name"));
+    h.appendChild(nameIn);
+    h.appendChild(el("div","hint-text",'<br>'+d.cards.length+' cards · '+dueCount(d)+' due now · '+
+      (d.cards.length?Math.round(d.cards.reduce(function(a,k){return a+k.box;},0)/d.cards.length*100/5)+'% average mastery':'empty')));
+    app.innerHTML=""; app.appendChild(h);
+
+    // add card
+    var add = el("div","panel");
+    add.appendChild(el("div","lbl","Add a card"));
+    var f = el("textarea","field"); f.placeholder="Front — the prompt (e.g. “Capital of Peru”)";
+    var b = el("textarea","field"); b.placeholder="Back — the answer (e.g. “Lima”)";
+    b.style.marginTop="10px";
+    var addBtn = el("button","btn green","Add card");
+    addBtn.style.marginTop="10px";
+    addBtn.onclick=function(){
+      if(!f.value.trim() && !b.value.trim()){ toast("Fill in at least one side"); return; }
+      d.cards.unshift(c(f.value.trim(), b.value.trim()));
+      save(); render(); toast("Card added");
+      var ta=app.querySelectorAll("textarea"); if(ta[0]) ta[0].focus();
+    };
+    add.appendChild(f); add.appendChild(b); add.appendChild(addBtn);
+    app.appendChild(add);
+
+    if(d.cards.length){
+      var list = el("div");
+      list.appendChild(el("div","lbl","Cards ("+d.cards.length+")"));
+      d.cards.forEach(function(k){
+        var r = el("div","cardrow");
+        r.appendChild(el("div","side",'<div class="lbl">Front</div>'+esc(k.front||"—")));
+        r.appendChild(el("div","side",'<div class="lbl">Back</div>'+esc(k.back||"—")+'<div class="hint-text" style="margin-top:6px">Box '+k.box+' · '+dueLabel(k.due)+'</div>'));
+        var tools = el("div","row");
+        var reset = el("button","iconbtn","↺"); reset.title="Reset progress"; reset.onclick=function(){ k.box=0;k.due=0;k.seen=0;k.right=0; save(); render(); };
+        var ed = el("button","iconbtn","✎"); ed.title="Edit"; ed.onclick=function(){
+          var nf=prompt("Front:",k.front); if(nf===null)return; var nb=prompt("Back:",k.back); if(nb===null)return;
+          k.front=nf; k.back=nb; save(); render();
+        };
+        var rm = el("button","iconbtn","✕"); rm.title="Delete"; rm.onclick=function(){ d.cards=d.cards.filter(function(x){return x.id!==k.id;}); save(); render(); };
+        tools.appendChild(reset); tools.appendChild(ed); tools.appendChild(rm);
+        r.appendChild(tools);
+        list.appendChild(r);
+      });
+      app.appendChild(list);
+    } else {
+      app.appendChild(el("div","empty","No cards yet — add your first above."));
+    }
+  }
+
+  /* ---------------- Study ---------------- */
+  var session = null;
+  function startStudy(d){
+    var t=now();
+    var queue = d.cards.filter(function(k){ return k.due<=t; });
+    if(!queue.length) queue = d.cards.slice(); // nothing due -> review all
+    queue = queue.sort(function(){ return Math.random()-0.5; });
+    if(!queue.length){ toast("Add some cards first"); return; }
+    session = { deck:d, queue:queue, idx:0, flipped:false, reviewed:0, correct:0, total:queue.length, start:Date.now() };
+    go("study",{id:d.id});
+  }
+
+  function renderStudy(id){
+    var d = deckById(id); if(!d || !session){ go("list"); return; }
+    location.hash="deck/"+id;
+    var back = el("button","btn ghost","End session"); back.onclick=function(){ session=null; go("deck",{id:id}); location.hash="deck/"+id; };
+    headerActions.appendChild(back);
+
+    if(session.idx>=session.queue.length){ renderSummary(d); return; }
+
+    var k = session.queue[session.idx];
+    var pct = Math.round(session.idx/session.total*100);
+    var html = ''+
+      '<div class="progressbar"><i style="width:'+pct+'%"></i></div>'+
+      '<div class="counter">Card '+(session.idx+1)+' of '+session.total+'</div>'+
+      '<div class="study-stage">'+
+        '<div class="flashcard'+(session.flipped?' flipped':'')+'" id="fc">'+
+          '<div class="face front"><span class="tag">Question</span><div class="big">'+esc(k.front||"—")+'</div><span class="hint">click to reveal</span></div>'+
+          '<div class="face back"><span class="tag">Answer</span><div class="big">'+esc(k.back||"—")+'</div><span class="hint">how well did you recall it?</span></div>'+
+        '</div>'+
+      '</div>';
+    app.innerHTML = html;
+    var fc = document.getElementById("fc");
+    fc.onclick=function(){ session.flipped=!session.flipped; fc.classList.toggle("flipped",session.flipped); updateStudyActions(); };
+
+    var actions = el("div","study-actions"); actions.id="studyActions";
+    app.appendChild(actions);
+    updateStudyActions();
+  }
+
+  function updateStudyActions(){
+    var box = document.getElementById("studyActions"); if(!box) return;
+    box.innerHTML="";
+    if(!session.flipped){
+      var reveal = el("button","btn accent","Reveal"); reveal.style.gridColumn="1 / -1";
+      reveal.onclick=function(){ session.flipped=true; document.getElementById("fc").classList.add("flipped"); updateStudyActions(); };
+      box.appendChild(reveal); return;
+    }
+    var again = el("button","btn ghost","Again"); again.onclick=function(){ grade(0); };
+    var good = el("button","btn accent","Good"); good.onclick=function(){ grade(1); };
+    var easy = el("button","btn green","Easy"); easy.onclick=function(){ grade(2); };
+    box.appendChild(again); box.appendChild(good); box.appendChild(easy);
+  }
+
+  function grade(kind){
+    var k = session.queue[session.idx];
+    k.seen++;
+    if(kind===0){ k.box=0; k.due=now(); }
+    else if(kind===1){ k.box=Math.min(k.box+1,INTERVALS.length-1); k.right++; k.due=now()+INTERVALS[k.box]*DAY; }
+    else { k.box=Math.min(k.box+2,INTERVALS.length-1); k.right++; k.due=now()+INTERVALS[k.box]*DAY; }
+    session.reviewed++;
+    if(kind>0) session.correct++;
+    session.idx++; session.flipped=false;
+    save();
+    if(kind===0 && session.queue.length<60) session.queue.push(k); // relearn later this session
+    render();
+  }
+
+  function renderSummary(d){
+    var secs = Math.round((Date.now()-session.start)/1000);
+    var mins = Math.floor(secs/60), s=secs%60;
+    var acc = session.reviewed? Math.round(session.correct/session.reviewed*100):0;
+    app.innerHTML = ''+
+      '<div class="done-hero">'+
+        '<h2>Session complete</h2>'+
+        '<div class="hint-text">Nice work — your cards will come back when it counts.</div>'+
+        '<div class="stat-row">'+
+          '<div class="stat"><b>'+session.reviewed+'</b><span>reviewed</span></div>'+
+          '<div class="stat"><b>'+acc+'%</b><span>recalled</span></div>'+
+          '<div class="stat"><b>'+mins+'m '+s+'s</b><span>time</span></div>'+
+        '</div>'+
+      '</div>';
+    var row = el("div","row"); row.style.justifyContent="center"; row.style.marginTop="18px";
+    var again = el("button","btn accent","Study again"); again.onclick=function(){ startStudy(d); };
+    var done = el("button","btn ghost","Back to deck"); done.onclick=function(){ session=null; go("deck",{id:d.id}); location.hash="deck/"+d.id; };
+    row.appendChild(again); row.appendChild(done);
+    app.appendChild(row);
+  }
+
+  /* keyboard */
+  document.addEventListener("keydown",function(e){
+    if(route.view!=="study" || !session) return;
+    if(e.key===" "){ e.preventDefault(); session.flipped=!session.flipped; var fc=document.getElementById("fc"); if(fc) fc.classList.toggle("flipped",session.flipped); updateStudyActions(); }
+    else if(session.flipped){
+      if(e.key==="1") grade(0); else if(e.key==="2") grade(1); else if(e.key==="3") grade(2);
+    }
+  });
+
+  /* boot */
+  fromHash();
+})();
+</script>
+</body>
+</html>
