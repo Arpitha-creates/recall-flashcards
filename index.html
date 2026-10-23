@@ -103,6 +103,25 @@
   .cand input.field{padding:9px 11px;font-size:14px;margin-bottom:8px}
   .cand input.field:last-child{margin-bottom:0}
   .badge-new{font-size:13px;color:var(--muted)}
+  /* ---- long answers & diagrams ---- */
+  .face{overflow:auto}
+  .face .big{white-space:pre-wrap;max-width:100%}
+  .face .big.long{font-size:17px;line-height:1.6;text-align:left}
+  .face img.diagram{max-width:100%;max-height:190px;border-radius:10px;margin-bottom:12px;border:1px solid var(--line);box-shadow:var(--shadow)}
+  .flashcard.tall{min-height:460px}
+  .flashcard.tall .face{padding:30px 28px 24px}
+  .cand textarea.field{font-family:var(--serif);font-size:14px;min-height:60px;resize:vertical;margin-bottom:8px}
+  .cand .thumb{max-width:140px;border:1px solid var(--line);border-radius:8px;display:block;margin:4px 0 8px}
+  .crop-modal{position:fixed;inset:0;z-index:80;background:rgba(30,26,20,.75);backdrop-filter:blur(3px);display:none;flex-direction:column;align-items:center;justify-content:center;padding:18px}
+  .crop-modal.show{display:flex}
+  .crop-head{color:#fff;font-size:14px;margin-bottom:10px;text-align:center}
+  .crop-stage{position:relative;max-width:92vw;max-height:64vh;overflow:auto;background:#fff;border-radius:10px;box-shadow:var(--shadow)}
+  .crop-stage img{display:block;max-width:100%;user-select:none;-webkit-user-drag:none}
+  .crop-rect{position:absolute;border:2px solid var(--accent);background:rgba(180,85,47,.18);pointer-events:none}
+  .crop-actions{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;justify-content:center}
+  .crop-pages{display:flex;gap:8px;margin-bottom:10px;flex-wrap:wrap;justify-content:center}
+  .crop-pages button{border:1px solid rgba(255,255,255,.4);background:transparent;color:#fff;border-radius:8px;padding:6px 12px;cursor:pointer;font-size:13px}
+  .crop-pages button.on{background:var(--accent);border-color:var(--accent)}
   .hidden{display:none!important}
   .hint-text{color:var(--muted);font-size:13.5px;line-height:1.6}
   .kbd{border:1px solid var(--line);border-bottom-width:2px;border-radius:6px;padding:1px 6px;font-size:12px;background:#fff}
@@ -169,7 +188,7 @@
     };
     return { decks: [d] };
   }
-  function c(front, back){ return { id:uid(), front:front, back:back, box:0, due:0, seen:0, right:0 }; }
+  function c(front, back, image){ return { id:uid(), front:front, back:back, image:image||null, box:0, due:0, seen:0, right:0 }; }
 
   function dueCount(deck){ var t=now(); return deck.cards.filter(function(k){ return k.due<=t; }).length; }
   function deckById(id){ return state.decks.filter(function(d){ return d.id===id; })[0]; }
@@ -252,10 +271,10 @@
         try{
           var obj=JSON.parse(r.result);
           if(obj && obj.name && Array.isArray(obj.cards)){
-            var d={ id:uid(), name:obj.name, cards:obj.cards.map(function(k){ return c(k.front||"",k.back||""); }) };
+            var d={ id:uid(), name:obj.name, cards:obj.cards.map(function(k){ return c(k.front||"",k.back||"", k.image||null); }) };
             state.decks.unshift(d); save(); render(); toast("Imported “"+d.name+"”");
           } else if(Array.isArray(obj)){
-            var d2={ id:uid(), name:"Imported deck", cards:obj.map(function(k){ return c(k.front||k.q||"",k.back||k.a||""); }) };
+            var d2={ id:uid(), name:"Imported deck", cards:obj.map(function(k){ return c(k.front||k.q||"",k.back||k.a||"", k.image||null); }) };
             state.decks.unshift(d2); save(); render(); toast("Imported "+d2.cards.length+" cards");
           } else { toast("Unrecognised file"); }
         }catch(e){ toast("Could not read that file"); }
@@ -337,6 +356,7 @@
     go("study",{id:d.id});
   }
 
+  function bigClass(t){ t=String(t||""); return (t.length>90||t.indexOf("\n")>=0) ? " long" : " short"; }
   function renderStudy(id){
     var d = deckById(id); if(!d || !session){ go("list"); return; }
     location.hash="deck/"+id;
@@ -347,13 +367,14 @@
 
     var k = session.queue[session.idx];
     var pct = Math.round(session.idx/session.total*100);
+    var fcLong = (bigClass(k.front)===" long" || bigClass(k.back)===" long");
     var html = ''+
       '<div class="progressbar"><i style="width:'+pct+'%"></i></div>'+
       '<div class="counter">Card '+(session.idx+1)+' of '+session.total+'</div>'+
       '<div class="study-stage">'+
-        '<div class="flashcard'+(session.flipped?' flipped':'')+'" id="fc">'+
-          '<div class="face front"><span class="tag">Question</span><div class="big">'+esc(k.front||"—")+'</div><span class="hint">click to reveal</span></div>'+
-          '<div class="face back"><span class="tag">Answer</span><div class="big">'+esc(k.back||"—")+'</div><span class="hint">how well did you recall it?</span></div>'+
+        '<div class="flashcard'+(session.flipped?' flipped':'')+(fcLong?' tall':'')+'" id="fc">'+
+          '<div class="face front"><span class="tag">Question</span><div class="big'+bigClass(k.front)+'">'+esc(k.front||"—")+'</div>'+(bigClass(k.front)===" long"?'':'<span class="hint">click to reveal</span>')+'</div>'+
+          '<div class="face back"><span class="tag">Answer</span>'+(k.image?'<img class="diagram" src="'+k.image+'" alt="diagram">':'')+'<div class="big'+bigClass(k.back)+'">'+esc(k.back||"—")+'</div>'+(bigClass(k.back)===" long"?'':'<span class="hint">how well did you recall it?</span>')+'</div>'+
         '</div>'+
       '</div>';
     app.innerHTML = html;
@@ -428,8 +449,8 @@
   var CDN_PDFWORKER = "https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js";
   var CDN_TESS = "https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js";
   var STOP = new Set(("the a an and or but of to in on at for with as is are was were be been being this that these those it its from by into over under about which who whom whose what when where why how not no than then there their they them he she his her you your we our i me my so such can could may might will would shall should do does did have has had also between within during while each other more most some any all both few many much own same very just only too once here").split(" "));
-  var gen = { sourceText:"", sourceLabel:"", method:"", candidates:[], deck:"__new__", newName:"", count:15, defs:true, cloze:true, qa:true };
-  var SAMPLE = "The water cycle\nEvaporation: the process by which liquid water turns into vapour.\nCondensation is the process where vapour cools and becomes liquid droplets.\nPrecipitation refers to water falling from clouds as rain, snow or hail.\nCollection is when water gathers in rivers, lakes and oceans.\n\nQ: What drives the water cycle?\nA: Energy from the sun.\n\nPhotosynthesis is the process plants use to make glucose from sunlight.\nChlorophyll is the green pigment that captures light energy.\nThe water cycle repeats endlessly and distributes fresh water across the planet.";
+  var gen = { sourceText:"", sourceLabel:"", method:"", candidates:[], deck:"__new__", newName:"", count:15, defs:true, cloze:true, qa:true, pages:null };
+  var SAMPLE = "The water cycle\nEvaporation: the process by which liquid water turns into vapour.\nCondensation is the process where vapour cools and becomes liquid droplets.\nPrecipitation refers to water falling from clouds as rain, snow or hail.\nCollection is when water gathers in rivers, lakes and oceans.\n\nPhotosynthesis is the process plants use to make glucose from sunlight.\nChlorophyll is the green pigment that captures light energy.\n\nQ1. Explain the water cycle in detail. (10 marks)\nThe water cycle is the continuous movement of water between the atmosphere, land and oceans. It has four main stages:\n1. Evaporation: the sun heats water in oceans and lakes and turns it into vapour.\n2. Condensation: the vapour rises, cools and forms clouds.\n3. Precipitation: water returns to the ground as rain, snow or hail.\n4. Collection: water gathers in rivers, lakes and oceans, and the cycle begins again.\n\nQ2. What drives the water cycle? (5 marks)\nEnergy from the sun drives the cycle, while gravity pulls precipitation back to the ground.\n\nQ3. Draw and label the stages of the water cycle. (10 marks)\nSee the diagram on page 4 of the notes. Label evaporation, condensation, precipitation and collection.";
 
   function loadScript(src){
     return new Promise(function(res,rej){
@@ -502,7 +523,7 @@
         window.pdfjsLib.GlobalWorkerOptions.workerSrc=CDN_PDFWORKER;
         var buf=await file.arrayBuffer();
         var doc=await window.pdfjsLib.getDocument({data:buf}).promise;
-        var parts=[];
+        var parts=[], pages=[];
         for(var p=1;p<=doc.numPages;p++){
           var page=await doc.getPage(p);
           var tc=await page.getTextContent();
@@ -510,9 +531,17 @@
           tc.items.forEach(function(it){ line+=it.str; if(it.hasEOL){ lines.push(line); line=""; } });
           if(line) lines.push(line);
           parts.push(lines.join("\n"));
+          if(p<=14){
+            try{
+              var vp=page.getViewport({scale:1.4});
+              var cv=document.createElement("canvas"); cv.width=vp.width; cv.height=vp.height;
+              await page.render({canvasContext:cv.getContext("2d"), viewport:vp}).promise;
+              pages.push(cv.toDataURL("image/jpeg",0.72));
+            }catch(e){}
+          }
         }
         var text=parts.join("\n\n");
-        if(text.replace(/\s/g,"").length>20) return { text:text, method:"PDF via pdf.js" };
+        if(text.replace(/\s/g,"").length>20) return { text:text, method:"PDF via pdf.js", pages:pages };
       }
     }catch(e){ /* fall through to the offline reader */ }
     try{
@@ -562,13 +591,65 @@
     for(var i=0;i<list.length;i++){ if(list[i]._key===key) return; }
     obj._key=key; list.push(obj);
   }
+  function marksOf(s){
+    var m=/[\(\[]\s*(\d{1,3})\s*(?:marks?|m|pts?|points?)\s*[\)\]]/i.exec(s) || /\b(\d{1,3})\s*marks?\b/i.exec(s);
+    return m? parseInt(m[1],10) : null;
+  }
+  function examQStart(line){
+    if(!line) return false;
+    if(/^\s*(?:Q(?:uestion)?|Que)\s*\.?\s*\d{0,2}\s*[.):\-]/i.test(line)) return true;
+    if(/^\s*\d{1,2}\s*[.)\]:\-]\s/.test(line)){
+      if(/\?/.test(line) || marksOf(line)!=null) return true;
+      if(/^\s*\d{1,2}\s*[.)\]:\-]\s*(what|why|how|when|where|which|who|explain|define|describe|state|list|write|draw|compare|differentiate|discuss|derive|prove|calculate|name|give|mention|illustrate)\b/i.test(line)) return true;
+    }
+    return false;
+  }
+  function parseExamQA(lines){
+    var out=[], i=0;
+    while(i<lines.length){
+      var line=lines[i];
+      if(examQStart(line)){
+        var qtext=line.replace(/^\s*(?:(?:Q(?:uestion)?|Que)\s*\.?\s*\d{0,2}\s*[.):\-]|\d{1,2}\s*[.):\-])\s*/i,"").trim();
+        var marks=marksOf(line);
+        qtext=qtext.replace(/[\(\[]\s*\d{1,3}\s*(?:marks?|m|pts?|points?)\s*[\)\]]/ig,"").trim();
+        var ans=[], j=i+1;
+        while(j<lines.length && /^\s*[\(\[]?\s*\d{1,3}\s*(?:marks?|m|pts?|points?)\s*[\)\]]?\s*$/i.test(lines[j])){
+          if(marks==null) marks=marksOf(lines[j]); j++;
+        }
+        while(j<lines.length && !examQStart(lines[j])){
+          if(lines[j].trim()==="" && j+1<lines.length && examQStart(lines[j+1])) break;
+          if(/^(diagram|figure|fig\.?|table|chart|graph)\b[:\s]/i.test(lines[j].trim())) break;
+          ans.push(lines[j]); j++;
+        }
+        var answer=ans.join("\n").replace(/\n{3,}/g,"\n\n").trim();
+        if(marks==null) marks=marksOf(answer.slice(0,90));
+        var looksQ = /\?/.test(qtext) || marks!=null || answer.length>60;
+        if(qtext.length>=6 && answer.replace(/\s/g,"").length>=3 && looksQ){
+          out.push({ q:qtext, a:answer, marks:marks });
+        }
+        i=Math.max(j,i+1);
+      } else i++;
+    }
+    return out;
+  }
   function makeCandidates(raw){
     var text=normalizeText(raw), cands=[], tf=termFreq(text);
     var lines=text.split("\n").map(function(l){return l.trim();});
 
+    // 0. exam-style questions with their exact answers (10 / 5 mark questions, Q&A blocks)
+    parseExamQA(lines).forEach(function(item){
+      var front=item.q+(item.marks? "  ("+item.marks+" marks)":"");
+      var isLong=item.a.length>110 || item.a.indexOf("\n")>=0;
+      addCand(cands,{front:front, back:item.a, tag:(item.marks? item.marks+" marks":"exam"), score:30+(item.marks||0)+defScore(item.a), long:isLong});
+    });
+
     // 1. "Term: definition" and "Term — definition" lines
     lines.forEach(function(line){
-      var m=/^(?:[-\u2022*\u2013]\s*)?([A-Z][^:\u2013\u2014]{1,60}?)\s*[:\u2013\u2014]\s*(.{15,})$/.exec(line);
+      if(examQStart(line)) return;
+      var stripped=line.replace(/^\s*\d{1,2}\s*[.)\]:\-]\s*/,"");
+      if(/\?/.test(stripped)) return;
+      if(/^(diagram|figure|fig\.?|table|chart|graph)\b/i.test(stripped)) return;
+      var m=/^(?:[-\u2022*\u2013]\s*)?([A-Z][^:\u2013\u2014]{1,60}?)\s*[:\u2013\u2014]\s*(.{15,})$/.exec(stripped);
       if(m){
         var term=cleanTerm(m[1]), def=m[2].trim();
         if(term && def && term.split(/\s+/).length<=8 && !/^(q|a|question|answer)$/i.test(term)){
@@ -576,17 +657,6 @@
         }
       }
     });
-
-    // 2. explicit Q: / A: pairs
-    for(var i=0;i<lines.length;i++){
-      var qm=/^(?:Q|Question)\s*[:\-]\s*(.+)$/i.exec(lines[i]);
-      if(qm){
-        for(var j=i+1;j<Math.min(i+3,lines.length);j++){
-          var am=/^(?:A|Answer)\s*[:\-]\s*(.+)$/i.exec(lines[j]);
-          if(am){ addCand(cands,{front:cap(qm[1]), back:cap(am[1]), tag:"qa", score:8}); break; }
-        }
-      }
-    }
 
     // 3. "X is / are / refers to / means ..."
     // split sentences within each line so separate lines never merge into one sentence
@@ -605,7 +675,7 @@
     // 4. heading followed by a sentence
     for(var k=0;k<lines.length-1;k++){
       var ln=lines[k];
-      if(ln.length>=3 && ln.length<=60 && !/[.!?:]$/.test(ln) && /^[A-Z0-9]/.test(ln) && ln.split(/\s+/).length<=7){
+      if(!examQStart(ln) && ln.length>=3 && ln.length<=60 && !/[.!?:]$/.test(ln) && /^[A-Z0-9]/.test(ln) && ln.split(/\s+/).length<=7){
         var nxt=lines[k+1];
         if(nxt && nxt.length>25 && /[.!?]$/.test(nxt)){
           var head=ln.charAt(0).toLowerCase()+ln.slice(1);
@@ -618,7 +688,8 @@
     var clozeUsed={};
     sentences.forEach(function(s){
       if(s.length<30||s.length>220) return;
-      if(/^(q|a|question|answer)\s*[:\-]/i.test(s)) return;
+      if(examQStart(s) || /^(q|a|question|answer)\s*[:\-]/i.test(s)) return;
+      if(!/[a-z]/.test(s)) return;
       var term=salientTerm(s,tf);
       if(!term) return;
       var tk=term.toLowerCase();
@@ -635,13 +706,13 @@
     if(!text || text.replace(/\s/g,"").length<30){ toast("Add a bit more text first"); return; }
     var cands=makeCandidates(text).filter(function(x){
       if(x.tag==="cloze") return gen.cloze;
-      if(x.tag==="qa") return gen.qa;
+      if(x.tag==="qa" || x.tag==="exam" || /marks?$/i.test(x.tag)) return gen.qa;
       return gen.defs;
     });
     cands.sort(function(a,b){ return b.score-a.score; });
     var seen={}, out=[];
     cands.forEach(function(x){ if(!seen[x._key]){ seen[x._key]=1; out.push(x); } });
-    gen.candidates = out.slice(0, gen.count).map(function(x){ return { front:x.front, back:x.back, tag:x.tag, include:true }; });
+    gen.candidates = out.slice(0, gen.count).map(function(x){ return { front:x.front, back:x.back, tag:x.tag, include:true, image:null }; });
     if(!gen.candidates.length){ toast("Couldn't find much to turn into cards — try more text"); }
     render();
   }
@@ -653,7 +724,7 @@
       deck={ id:uid(), name:(gen.newName.trim()||"Generated deck"), cards:[] };
       state.decks.unshift(deck);
     } else { deck=deckById(gen.deck); }
-    chosen.forEach(function(x){ deck.cards.unshift(c(x.front.trim(), x.back.trim())); });
+    chosen.forEach(function(x){ deck.cards.unshift(c(x.front.trim(), x.back.trim(), x.image||null)); });
     save();
     var n=chosen.length, name=deck.name;
     gen.candidates=[]; gen.sourceText=""; gen.sourceLabel=""; gen.method=""; gen.newName=""; gen.deck="__new__";
@@ -685,10 +756,10 @@
       try{
         var res;
         if(/\.pdf$/i.test(f.name) || f.type==="application/pdf") res=await extractPdf(f);
-        else if(/^image\//.test(f.type)) res=await ocrImage(f);
+        else if(/^image\//.test(f.type)){ res=await ocrImage(f); res.pages=[await fileToDataURL(f)]; }
         else res={ text: await f.text(), method:"Text file" };
         if(!res.text || res.text.replace(/\s/g,"").length<20) throw new Error("No readable text found in that file.");
-        gen.sourceText=res.text; gen.method=res.method; gen.sourceLabel=f.name;
+        gen.sourceText=res.text; gen.method=res.method; gen.sourceLabel=f.name; gen.pages=res.pages||null;
         toast("Loaded "+f.name); render();
       }catch(err){ toast(err.message||"Couldn't read that file"); }
     };
@@ -707,7 +778,7 @@
     var orow=el("div","gen-opt");
     var countWrap=el("label"); countWrap.appendChild(document.createTextNode("How many cards "));
     var sel=el("select","field"); sel.style.width="auto";
-    [10,15,25,40,60].forEach(function(n){ var o=document.createElement("option"); o.value=n; o.textContent=n; if(n===gen.count) o.selected=true; sel.appendChild(o); });
+    [10,15,25,40,60,100].forEach(function(n){ var o=document.createElement("option"); o.value=n; o.textContent=n; if(n===gen.count) o.selected=true; sel.appendChild(o); });
     sel.onchange=function(){ gen.count=parseInt(sel.value,10); };
     countWrap.appendChild(sel); orow.appendChild(countWrap);
     function chk(label,key){
@@ -717,7 +788,7 @@
     }
     orow.appendChild(chk("Definitions","defs"));
     orow.appendChild(chk("Fill-in-the-blank","cloze"));
-    orow.appendChild(chk("Q & A pairs","qa"));
+    orow.appendChild(chk("Q & A / exam questions","qa"));
     opt.appendChild(orow);
     var genBtn=el("button","btn accent","Generate flashcards"); genBtn.style.marginTop="16px";
     genBtn.onclick=function(){ gen.sourceText=ta.value; generateCards(); };
@@ -745,8 +816,17 @@
         var right=el("div");
         right.appendChild(el("div","tagchip", cd.tag));
         var fin=el("input","field"); fin.value=cd.front; fin.oninput=function(){ cd.front=fin.value; };
-        var bin=el("input","field"); bin.value=cd.back; bin.oninput=function(){ cd.back=bin.value; };
-        right.appendChild(fin); right.appendChild(bin);
+        right.appendChild(fin);
+        var bin=el("textarea","field"); bin.value=cd.back; bin.oninput=function(){ cd.back=bin.value; };
+        bin.style.minHeight=(cd.back.length>110||cd.back.indexOf("\n")>=0)?"120px":"60px";
+        right.appendChild(bin);
+        if(cd.image){ var th=el("img","thumb"); th.src=cd.image; right.appendChild(th); }
+        var attRow=el("div","row");
+        var att=el("button","btn ghost tiny", cd.image?"Replace diagram":"Attach diagram");
+        att.onclick=function(){ openCrop(gen.candidates.indexOf(cd)); };
+        attRow.appendChild(att);
+        if(cd.image){ var rmImg=el("button","btn ghost tiny","Remove diagram"); rmImg.onclick=function(){ cd.image=null; render(); }; attRow.appendChild(rmImg); }
+        right.appendChild(attRow);
         rowEl.appendChild(right); rev.appendChild(rowEl);
       });
 
@@ -773,6 +853,88 @@
     }
 
     app.innerHTML=""; app.appendChild(wrap);
+  }
+
+  /* ---- diagram capture (crop from a PDF page or an image) ---- */
+  var crop={ idx:null, page:0, rect:null, handlers:null };
+  function fileToDataURL(file){ return new Promise(function(res){ var r=new FileReader(); r.onload=function(){ res(r.result); }; r.readAsDataURL(file); }); }
+  function openCrop(idx){
+    crop.idx=idx; crop.page=0; crop.rect=null;
+    if(!gen.pages || !gen.pages.length){ pickCropImage(); return; }
+    buildCropModal();
+  }
+  function pickCropImage(){
+    var inp=document.createElement("input"); inp.type="file"; inp.accept="image/*";
+    inp.onchange=async function(){ if(inp.files[0]){ gen.pages=[await fileToDataURL(inp.files[0])]; buildCropModal(); } };
+    inp.click();
+  }
+  function closeCrop(){
+    var m=document.getElementById("cropModal"); if(m){ m.classList.remove("show"); m.innerHTML=""; }
+    if(crop.handlers){ window.removeEventListener("pointermove",crop.handlers.move); window.removeEventListener("pointerup",crop.handlers.up); crop.handlers=null; }
+  }
+  function buildCropModal(){
+    var m=document.getElementById("cropModal");
+    if(!m){ m=el("div","crop-modal"); m.id="cropModal"; document.body.appendChild(m); }
+    m.innerHTML="";
+    m.appendChild(el("div","crop-head","Drag a box around the diagram you want on this card"));
+    if(gen.pages.length>1){
+      var pgs=el("div","crop-pages");
+      gen.pages.forEach(function(_,i){
+        var b=el("button", i===crop.page?"on":"","Page "+(i+1));
+        b.onclick=function(){ crop.page=i; crop.rect=null; buildCropModal(); };
+        pgs.appendChild(b);
+      });
+      m.appendChild(pgs);
+    }
+    var stage=el("div","crop-stage");
+    var img=document.createElement("img"); img.src=gen.pages[crop.page]; img.draggable=false;
+    stage.appendChild(img);
+    var rect=el("div","crop-rect"); rect.style.display="none"; stage.appendChild(rect);
+    m.appendChild(stage);
+
+    var actions=el("div","crop-actions");
+    var useBtn=el("button","btn accent","Use this crop"); useBtn.disabled=true;
+    var pick=el("button","btn ghost","Choose another image");
+    var cancel=el("button","btn ghost","Cancel");
+    actions.appendChild(useBtn); actions.appendChild(pick); actions.appendChild(cancel);
+    m.appendChild(actions);
+    m.classList.add("show");
+
+    function pos(e){
+      var r=img.getBoundingClientRect();
+      var cx=(e.touches?e.touches[0].clientX:e.clientX), cy=(e.touches?e.touches[0].clientY:e.clientY);
+      return { x:cx-r.left, y:cy-r.top };
+    }
+    var drawing=false, sx=0, sy=0;
+    function down(e){ e.preventDefault(); drawing=true; var p=pos(e); sx=p.x; sy=p.y;
+      rect.style.display="block"; rect.style.left=sx+"px"; rect.style.top=sy+"px"; rect.style.width="0px"; rect.style.height="0px";
+      crop.rect=null; useBtn.disabled=true; }
+    function move(e){ if(!drawing) return; e.preventDefault(); var p=pos(e);
+      var x=Math.min(sx,p.x), y=Math.min(sy,p.y), w=Math.abs(p.x-sx), h=Math.abs(p.y-sy);
+      rect.style.left=x+"px"; rect.style.top=y+"px"; rect.style.width=w+"px"; rect.style.height=h+"px";
+      crop.rect={x:x,y:y,w:w,h:h}; useBtn.disabled=!(w>8&&h>8); }
+    function up(){ drawing=false; }
+    stage.addEventListener("pointerdown",down);
+    window.addEventListener("pointermove",move);
+    window.addEventListener("pointerup",up);
+    crop.handlers={ move:move, up:up };
+
+    useBtn.onclick=function(){
+      var r=crop.rect; if(!r) return;
+      var dispW=img.getBoundingClientRect().width || img.width || 1;
+      var scale=(img.naturalWidth||dispW)/dispW;
+      var sx2=Math.max(0,Math.round(r.x*scale)), sy2=Math.max(0,Math.round(r.y*scale));
+      var sw=Math.round(r.w*scale), sh=Math.round(r.h*scale);
+      if(sw<2||sh<2) return;
+      var outW=Math.min(sw,900), outH=Math.max(1,Math.round(sh*(outW/sw)));
+      var cv=document.createElement("canvas"); cv.width=outW; cv.height=outH;
+      try{ cv.getContext("2d").drawImage(img, sx2,sy2,sw,sh, 0,0,outW,outH); }catch(e){}
+      var url=cv.toDataURL("image/jpeg",0.82);
+      if(crop.idx!=null && gen.candidates[crop.idx]) gen.candidates[crop.idx].image=url;
+      closeCrop(); render();
+    };
+    pick.onclick=function(){ pickCropImage(); };
+    cancel.onclick=closeCrop;
   }
 
   /* boot */
